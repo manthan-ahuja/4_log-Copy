@@ -5,7 +5,7 @@ import '../widgets/avatar_list.dart';
 import '../widgets/gallery_section.dart';
 import '../widgets/bottom_nav.dart';
 
-import 'camera_screen.dart';
+import 'map_screen.dart';
 import 'friends_screen.dart';
 import 'account_screen.dart';
 
@@ -19,9 +19,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int index = 0;
 
-  final pages = const [
+  final List<Widget> pages = const [
     _HomeContent(),
-    CameraScreen(),
+    MapScreen(),
     FriendsScreen(),
     AccountScreen(),
   ];
@@ -30,7 +30,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFEAF7F9),
-      body: SafeArea(child: pages[index]),
+      body: SafeArea(
+        child: IndexedStack(index: index, children: pages),
+      ),
       bottomNavigationBar: BottomNavBar(
         currentIndex: index,
         onTap: (i) => setState(() => index = i),
@@ -48,12 +50,7 @@ class _HomeContent extends StatelessWidget {
       children: [
         const Expanded(child: MapSection()),
         SingleChildScrollView(
-          child: Column(
-            children: const [
-              AvatarList(),
-              CardSection(),
-            ],
-          ),
+          child: Column(children: const [AvatarList(), CardSection()]),
         ),
       ],
     );

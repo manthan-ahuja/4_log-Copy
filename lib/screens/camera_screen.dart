@@ -1,8 +1,6 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:gallery_saver_plus/gallery_saver.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -32,7 +30,9 @@ class _CameraScreenState extends State<CameraScreen>
   void initState() {
     super.initState();
     shutter = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 150));
+      vsync: this,
+      duration: const Duration(milliseconds: 150),
+    );
     init();
   }
 
@@ -63,43 +63,42 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> capture() async {
-  if (busy) return;
-  busy = true;
+    if (busy) return;
+    busy = true;
 
-  await shutter.forward();
-  await shutter.reverse();
+    await shutter.forward();
+    await shutter.reverse();
 
-  final shot = await controller!.takePicture();
+    final shot = await controller!.takePicture();
 
-  final file = File(shot.path);
+    final file = File(shot.path);
 
-  // SAVE TO PHONE GALLERY
-  await GallerySaver.saveImage(file.path);
+    // SAVE TO PHONE GALLERY
+    await GallerySaver.saveImage(file.path);
 
-  final bytes = await file.readAsBytes();
+    final bytes = await file.readAsBytes();
 
-  final pos = await Geolocator.getCurrentPosition();
+    final pos = await Geolocator.getCurrentPosition();
 
-  final name = "${DateTime.now().millisecondsSinceEpoch}.jpg";
+    final name = "${DateTime.now().minute}.jpg";
 
-  // UPLOAD TO SUPABASE STORAGE
-  await supabase.storage.from('photos').uploadBinary(name, bytes);
+    // UPLOAD TO SUPABASE STORAGE
+    await supabase.storage.from('photos').uploadBinary(name, bytes);
 
-  final url = supabase.storage.from('photos').getPublicUrl(name);
+    final url = supabase.storage.from('photos').getPublicUrl(name);
 
-  // INSERT DATABASE ROW
-  await supabase.from('photo').insert({
-    'user_id': supabase.auth.currentUser!.id,
-    'image_url': url,
-    'latitude': pos.latitude,
-    'longitude': pos.longitude,
-    'taken_at': DateTime.now().toIso8601String(),
-    'is_public': true,
-  });
+    // INSERT DATABASE ROW
+    await supabase.from('photo').insert({
+      'user_id': supabase.auth.currentUser!.id,
+      'image_url': url,
+      'latitude': pos.latitude,
+      'longitude': pos.longitude,
+      'taken_at': DateTime.now().toIso8601String(),
+      'is_public': true,
+    });
 
-  busy = false;
-}
-
+    busy = false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -109,45 +108,63 @@ class _CameraScreenState extends State<CameraScreen>
 
     return Scaffold(
       backgroundColor: const Color(0xFF06181C),
-      body: Stack(children: [
-        Positioned.fill(child: CameraPreview(controller!)),
+      body: Stack(
+        children: [
+          Positioned.fill(child: CameraPreview(controller!)),
 
-        FadeTransition(
-            opacity: shutter, child: Container(color: Colors.white)),
+          FadeTransition(
+            opacity: shutter,
+            child: Container(color: Colors.white),
+          ),
 
-        Positioned(
+          Positioned(
             right: 20,
             top: 60,
             child: IconButton(
-                onPressed: toggleFlash,
-                icon: Icon(flash ? Icons.flash_on : Icons.flash_off,
-                    color: Colors.white))),
+              onPressed: toggleFlash,
+              icon: Icon(
+                flash ? Icons.flash_on : Icons.flash_off,
+                color: Colors.white,
+              ),
+            ),
+          ),
 
-        Positioned(
+          Positioned(
             bottom: 40,
             left: 0,
             right: 0,
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              IconButton(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
                   icon: const Icon(Icons.grid_view, color: Colors.white),
-                  onPressed: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const GalleryScreen()))),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const GalleryScreen()),
+                  ),
+                ),
 
-              GestureDetector(
-                onTap: capture,
-                child: Container(
+                GestureDetector(
+                  onTap: capture,
+                  child: Container(
                     width: 70,
                     height: 70,
                     decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 4))),
-              ),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 4),
+                    ),
+                  ),
+                ),
 
-              IconButton(
+                IconButton(
                   icon: const Icon(Icons.cameraswitch, color: Colors.white),
-                  onPressed: switchCam),
-            ]))
-      ]),
+                  onPressed: switchCam,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

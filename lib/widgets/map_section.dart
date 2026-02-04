@@ -18,13 +18,15 @@ class _MapSectionState extends State<MapSection> {
   final supabase = Supabase.instance.client;
 
   LatLng? currentLocation;
-  double _zoom = 13;
+  final double _zoom = 13;
 
-  StreamSubscription<Position>? _positionStream;
   Timer? _friendsTimer;
 
   String? avatarUrl;
+  String? username;
   List<Map<String, dynamic>> friendsLocations = [];
+
+  String? _selectedUserId;
 
   String get myId => supabase.auth.currentUser!.id;
 
@@ -42,39 +44,47 @@ class _MapSectionState extends State<MapSection> {
 
   Future<void> _init() async {
     await Permission.location.request();
-    await _startTracking();
+    await _loadProfile();
+    await _refreshLocation();
     _startFriendsPolling();
   }
 
-  // -------- YOUR LOCATION --------
-  Future<void> _startTracking() async {
-    if (!await Geolocator.isLocationServiceEnabled()) return;
-
-    LocationPermission p = await Geolocator.checkPermission();
-    if (p == LocationPermission.denied) p = await Geolocator.requestPermission();
-    if (p == LocationPermission.deniedForever || p == LocationPermission.denied) return;
-
+  // -------- PROFILE --------
+  Future<void> _loadProfile() async {
     final me = await supabase
         .from('User')
-        .select('avatar_url')
+        .select('avatar_url, username')
         .eq('user_id', myId)
         .maybeSingle();
 
-    avatarUrl = me?['avatar_url'];
-
-    final pos = await Geolocator.getCurrentPosition();
-    await _update(pos);
-
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings:
-          const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
-    ).listen(_update);
+    setState(() {
+      avatarUrl = me?['avatar_url'];
+      username = me?['username'];
+    });
   }
 
-  Future<void> _update(Position p) async {
+  // -------- LOCATION --------
+  Future<void> _refreshLocation() async {
+    if (!await Geolocator.isLocationServiceEnabled()) return;
+
+    LocationPermission p = await Geolocator.checkPermission();
+    if (p == LocationPermission.denied) {
+      p = await Geolocator.requestPermission();
+    }
+    if (p == LocationPermission.denied || p == LocationPermission.deniedForever)
+      return;
+
+    final pos = await Geolocator.getCurrentPosition();
+    await _update(pos, moveMap: true);
+  }
+
+  Future<void> _update(Position p, {bool moveMap = false}) async {
     final ll = LatLng(p.latitude, p.longitude);
     setState(() => currentLocation = ll);
-    _mapController.move(ll, _zoom);
+
+    if (moveMap) {
+      _mapController.move(ll, _zoom);
+    }
 
     await supabase.from('user_location').upsert({
       'user_id': myId,
@@ -87,128 +97,159 @@ class _MapSectionState extends State<MapSection> {
   // -------- FRIENDS --------
   void _startFriendsPolling() {
     _fetchFriends();
-    _friendsTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) => _fetchFriends());
+    _friendsTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _fetchFriends(),
+    );
   }
 
   Future<void> _fetchFriends() async {
-  try {
-    // 1. Get accepted friendships
-    final a = await supabase
-        .from('friendship')
-        .select('receiver_id')
-        .eq('sender_id', myId)
-        .eq('status', 'accepted');
+    try {
+      final a = await supabase
+          .from('friendship')
+          .select('receiver_id')
+          .eq('sender_id', myId)
+          .eq('status', 'accepted');
 
-    final b = await supabase
-        .from('friendship')
-        .select('sender_id')
-        .eq('receiver_id', myId)
-        .eq('status', 'accepted');
+      final b = await supabase
+          .from('friendship')
+          .select('sender_id')
+          .eq('receiver_id', myId)
+          .eq('status', 'accepted');
 
-    final ids = <String>{
-      ...a.map((e) => e['receiver_id'] as String),
-      ...b.map((e) => e['sender_id'] as String),
-    };
-
-    if (ids.isEmpty) {
-      setState(() => friendsLocations = []);
-      return;
-    }
-
-    // 2. Fetch their locations + avatars
-    final res = await supabase
-        .from('user_location')
-        .select('user_id, latitude, longitude')
-        .inFilter('user_id', ids.toList());
-
-    final users = await supabase
-        .from('User')
-        .select('user_id, avatar_url')
-        .inFilter('user_id', ids.toList());
-
-    final avatarMap = {
-      for (final u in users) u['user_id']: u['avatar_url']
-    };
-
-    final merged = res.map((e) {
-      return {
-        ...e,
-        'avatar': avatarMap[e['user_id']],
+      final ids = <String>{
+        ...a.map((e) => e['receiver_id'] as String),
+        ...b.map((e) => e['sender_id'] as String),
       };
-    }).toList();
 
-    debugPrint("FRIENDS FINAL: $merged");
+      if (ids.isEmpty) {
+        setState(() => friendsLocations = []);
+        return;
+      }
 
-    setState(() => friendsLocations = merged);
-  } catch (e) {
-    debugPrint("Friends fetch failed: $e");
+      final locations = await supabase
+          .from('user_location')
+          .select('user_id, latitude, longitude')
+          .inFilter('user_id', ids.toList());
+
+      final users = await supabase
+          .from('User')
+          .select('user_id, avatar_url, username')
+          .inFilter('user_id', ids.toList());
+
+      final userMap = {
+        for (final u in users)
+          u['user_id']: {'avatar': u['avatar_url'], 'username': u['username']},
+      };
+
+      final merged = locations.map((e) {
+        final u = userMap[e['user_id']];
+        return {...e, 'avatar': u?['avatar'], 'username': u?['username']};
+      }).toList();
+
+      setState(() => friendsLocations = merged);
+    } catch (e) {
+      debugPrint('Friends fetch error: $e');
+    }
   }
-}
 
+  // -------- UI HELPERS --------
+  ImageProvider? _avatarProvider(String? url) {
+    if (url == null || url.isEmpty) return null;
+    if (url.startsWith('http')) return NetworkImage(url);
+    return AssetImage(url);
+  }
 
-  // -------- FULLSCREEN --------
-  void _openFullMap() {
-    showDialog(
-      context: context,
-      builder: (_) => Scaffold(
-        body: Stack(
-          children: [
-            _mapWidget(fullscreen: true),
-            Positioned(
-              top: 40,
-              right: 20,
-              child: FloatingActionButton(
-                mini: true,
-                onPressed: () => Navigator.pop(context),
-                child: const Icon(Icons.close),
-              ),
-            )
-          ],
-        ),
+  Widget _nameBubble(String name) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        name,
+        style: const TextStyle(color: Colors.white, fontSize: 12),
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
 
-  Widget _mapWidget({bool fullscreen = false}) {
+  // -------- MAP --------
+  Widget _mapWidget() {
     final center = currentLocation ?? const LatLng(37.7749, -122.4194);
 
     return FlutterMap(
       mapController: _mapController,
-      options: MapOptions(initialCenter: center, initialZoom: _zoom),
+      options: MapOptions(
+        initialCenter: center,
+        initialZoom: _zoom,
+        onTap: (_, __) => setState(() => _selectedUserId = null),
+      ),
       children: [
         TileLayer(urlTemplate: tileUrl, userAgentPackageName: 'geo.app'),
-
         MarkerLayer(
           markers: [
             if (currentLocation != null)
               Marker(
                 point: currentLocation!,
-                width: 40,
-                height: 40,
-                child: CircleAvatar(
-                  radius: 20,
-                  backgroundImage:
-                      avatarUrl != null ? AssetImage(avatarUrl!) : null,
+                width: 140,
+                height: 70,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedUserId = _selectedUserId == myId ? null : myId;
+                    });
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_selectedUserId == myId)
+                        _nameBubble(username ?? 'You'),
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundImage: _avatarProvider(avatarUrl),
+                        child: avatarUrl == null
+                            ? const Icon(Icons.person)
+                            : null,
+                      ),
+                    ],
+                  ),
                 ),
               ),
 
-            ...friendsLocations
-                .where((e) => e['user_id'] != myId)
-                .map((e) {
+            ...friendsLocations.map((e) {
               final lat = e['latitude'];
               final lng = e['longitude'];
-              final avatar = e['avatar'];
               if (lat == null || lng == null) return null;
 
               return Marker(
                 point: LatLng(lat, lng),
-                width: 32,
-                height: 32,
-                child: CircleAvatar(
-                  radius: 14,
-                  backgroundImage:
-                      avatar != null ? AssetImage(avatar) : null,
+                width: 140,
+                height: 60,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedUserId = _selectedUserId == e['user_id']
+                          ? null
+                          : e['user_id'];
+                    });
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_selectedUserId == e['user_id'])
+                        _nameBubble(e['username'] ?? 'Friend'),
+                      CircleAvatar(
+                        radius: 14,
+                        backgroundImage: _avatarProvider(e['avatar']),
+                        child: e['avatar'] == null
+                            ? const Icon(Icons.person, size: 16)
+                            : null,
+                      ),
+                    ],
+                  ),
                 ),
               );
             }).whereType<Marker>(),
@@ -220,17 +261,16 @@ class _MapSectionState extends State<MapSection> {
 
   @override
   void dispose() {
-    _positionStream?.cancel();
     _friendsTimer?.cancel();
     super.dispose();
   }
 
+  // -------- BUILD --------
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         _mapWidget(),
-
         Positioned(
           top: 16,
           left: 16,
@@ -246,19 +286,18 @@ class _MapSectionState extends State<MapSection> {
               children: [
                 Icon(Icons.search),
                 SizedBox(width: 8),
-                Text("Search"),
+                Text('Search'),
               ],
             ),
           ),
         ),
-
         Positioned(
           top: 16,
           right: 16,
           child: FloatingActionButton(
             mini: true,
-            onPressed: _openFullMap,
-            child: const Icon(Icons.fullscreen),
+            onPressed: _refreshLocation,
+            child: const Icon(Icons.my_location),
           ),
         ),
       ],

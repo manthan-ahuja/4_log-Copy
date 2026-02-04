@@ -20,7 +20,10 @@ class BottomNavBar extends StatelessWidget {
       unselectedItemColor: Colors.grey,
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-        BottomNavigationBarItem(icon: Icon(Icons.camera_alt), label: 'Camera'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.location_on_sharp),
+          label: 'Map',
+        ),
         BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Friends'),
         BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Account'),
       ],

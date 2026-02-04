@@ -13,7 +13,11 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true; // ⭐ keeps map alive in bottom nav
+
   final MapController _mapController = MapController();
   final supabase = Supabase.instance.client;
 
@@ -53,8 +57,8 @@ class _MapScreenState extends State<MapScreen> {
     if (p == LocationPermission.denied) {
       p = await Geolocator.requestPermission();
     }
-    if (p == LocationPermission.deniedForever ||
-        p == LocationPermission.denied) return;
+    if (p == LocationPermission.denied || p == LocationPermission.deniedForever)
+      return;
 
     final me = await supabase
         .from('User')
@@ -68,15 +72,20 @@ class _MapScreenState extends State<MapScreen> {
     await _update(pos);
 
     _positionStream = Geolocator.getPositionStream(
-      locationSettings:
-          const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
     ).listen(_update);
   }
 
   Future<void> _update(Position p) async {
     final ll = LatLng(p.latitude, p.longitude);
-    setState(() => currentLocation = ll);
-    _mapController.move(ll, _zoom);
+
+    if (mounted) {
+      setState(() => currentLocation = ll);
+      _mapController.move(ll, _zoom);
+    }
 
     await supabase.from('user_location').upsert({
       'user_id': myId,
@@ -88,8 +97,10 @@ class _MapScreenState extends State<MapScreen> {
 
   void _startFriendsPolling() {
     _fetchFriendsLocations();
-    _friendsTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) => _fetchFriendsLocations());
+    _friendsTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _fetchFriendsLocations(),
+    );
   }
 
   Future<void> _fetchFriendsLocations() async {
@@ -99,8 +110,6 @@ class _MapScreenState extends State<MapScreen> {
       longitude,
       User!user_location_user_id_fkey(avatar_url)
     ''');
-
-    debugPrint("FRIENDS RAW: $res");
 
     if (mounted) {
       setState(() {
@@ -118,6 +127,8 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // ⭐ REQUIRED for keep-alive
+
     final center = currentLocation ?? const LatLng(37.7749, -122.4194);
 
     return Scaffold(
@@ -135,22 +146,18 @@ class _MapScreenState extends State<MapScreen> {
                   width: 40,
                   height: 40,
                   child: CircleAvatar(
-                    radius: 20,
                     backgroundImage: avatarUrl != null
                         ? AssetImage(avatarUrl!)
                         : null,
-                    child: avatarUrl == null
-                        ? const Icon(Icons.person)
-                        : null,
+                    child: avatarUrl == null ? const Icon(Icons.person) : null,
                   ),
                 ),
 
-              ...friendsLocations
-                  .where((e) => e['user_id'] != myId)
-                  .map((e) {
+              ...friendsLocations.where((e) => e['user_id'] != myId).map((e) {
                 final lat = e['latitude'];
                 final lng = e['longitude'];
                 final avatar = e['User']?['avatar_url'];
+
                 if (lat == null || lng == null) return null;
 
                 return Marker(
@@ -158,11 +165,10 @@ class _MapScreenState extends State<MapScreen> {
                   width: 36,
                   height: 36,
                   child: CircleAvatar(
-                    radius: 16,
-                    backgroundImage:
-                        avatar != null ? AssetImage(avatar) : null,
-                    child:
-                        avatar == null ? const Icon(Icons.person, size: 12) : null,
+                    backgroundImage: avatar != null ? AssetImage(avatar) : null,
+                    child: avatar == null
+                        ? const Icon(Icons.person, size: 12)
+                        : null,
                   ),
                 );
               }).whereType<Marker>(),
